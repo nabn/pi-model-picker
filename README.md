@@ -25,7 +25,7 @@ Instead of a flat searchable list, models are grouped by provider in horizontal 
 - **Active model** shown with `●` and highlighted in green
 - **Context window** shown as `200k`, `1M`, etc.
 - **Capability tags**: `thinking` (extended reasoning), `vision` (image input)
-- **Search** filters by model name or id within the current category
+- **Fuzzy search** filters by model name or id within the current category — `c37s` finds `claude-3-7-sonnet`, and results are ranked best-match first
 - **Search term preserved** per category — switch away and back, your query is still there
 - **Wraparound navigation** — `↑` on the first item jumps to the last, and vice versa
 - **Startup default** — selecting a model saves its provider and ID to pi's global `settings.json`

@@ -119,6 +119,79 @@ function fmtCtx(tokens: number): string {
 	return String(tokens);
 }
 
+// ─── fuzzy matching ─────────────────────────────────────────────────────────
+
+/**
+ * Subsequence fuzzy match with quality scoring.
+ *
+ * Every character of `query` must appear in `text` in order, but not
+ * necessarily contiguously — so "c37s" matches "claude-3-7-sonnet".
+ * Returns null when there is no match, otherwise a score where higher is
+ * better. Scoring rewards:
+ *   - consecutive runs of matched characters (substring matches win)
+ *   - matches at the start of the text
+ *   - matches right after a word boundary (-, _, ., /, space, digit run)
+ * and penalises characters skipped between matches.
+ *
+ * Both arguments must already be lowercased by the caller.
+ */
+function fuzzyScore(text: string, query: string): number | null {
+	if (query.length === 0) return 0;
+	if (query.length > text.length) return null;
+
+	const isBoundary = (i: number): boolean => {
+		if (i === 0) return true;
+		const prev = text[i - 1] ?? "";
+		return prev === "-" || prev === "_" || prev === "." || prev === "/" || prev === " ";
+	};
+
+	let score = 0;
+	let textIdx = 0;
+	let prevMatchIdx = -1;
+	let run = 0;
+
+	for (const qc of query) {
+		let found = -1;
+		for (let i = textIdx; i < text.length; i++) {
+			if (text[i] === qc) {
+				found = i;
+				break;
+			}
+		}
+		if (found === -1) return null;
+
+		if (found === prevMatchIdx + 1) {
+			run += 1;
+			score += 10 + run * 5; // consecutive chars compound
+		} else {
+			run = 0;
+			score += 10;
+			// penalise the gap we had to skip, bounded so long ids aren't crushed
+			const gap = found - prevMatchIdx - 1;
+			score -= Math.min(gap, 10);
+		}
+
+		if (found === 0) score += 15;
+		else if (isBoundary(found)) score += 8;
+
+		prevMatchIdx = found;
+		textIdx = found + 1;
+	}
+
+	// Prefer shorter texts when the match quality is otherwise equal
+	score -= Math.min(text.length - query.length, 20) * 0.1;
+	return score;
+}
+
+/** Best fuzzy score across a model's name and id, or null if neither matches. */
+function matchModel(model: Model<Api>, query: string): number | null {
+	const byName = fuzzyScore(model.name.toLowerCase(), query);
+	const byId = fuzzyScore(model.id.toLowerCase(), query);
+	if (byName === null) return byId;
+	if (byId === null) return byName;
+	return Math.max(byName, byId);
+}
+
 // ─── component ──────────────────────────────────────────────────────────────
 
 interface ModelPickerOptions {
@@ -226,11 +299,14 @@ class ModelPickerComponent {
 		if (!query) {
 			this.filteredRows = source;
 		} else {
-			this.filteredRows = source.filter(
-				(m) =>
-					m.name.toLowerCase().includes(query) ||
-					m.id.toLowerCase().includes(query),
-			);
+			const scored: { model: Model<Api>; score: number; index: number }[] = [];
+			source.forEach((model, index) => {
+				const score = matchModel(model, query);
+				if (score !== null) scored.push({ model, score, index });
+			});
+			// Best match first; original ordering breaks ties so the list is stable
+			scored.sort((a, b) => b.score - a.score || a.index - b.index);
+			this.filteredRows = scored.map((s) => s.model);
 		}
 		// Clamp row selection
 		this.rowIndex = Math.min(this.rowIndex, Math.max(0, this.filteredRows.length - 1));
