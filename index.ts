@@ -328,9 +328,9 @@ class ModelPickerComponent {
 				const score = matchModel(model, query);
 				if (score !== null) scored.push({ model, score, index });
 			});
-			// Best match first; among equally relevant results, show newer models first.
+			// Search filters by match quality, but always keeps newer model revisions first.
 			scored.sort((a, b) =>
-				b.score - a.score || compareModelRecency(a.model, b.model) || a.index - b.index,
+				compareModelRecency(a.model, b.model) || b.score - a.score || a.index - b.index,
 			);
 			this.filteredRows = scored.map((s) => s.model);
 		}
