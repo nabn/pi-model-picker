@@ -192,6 +192,35 @@ function matchModel(model: Model<Api>, query: string): number | null {
 	return Math.max(byName, byId);
 }
 
+/**
+ * Sort newer model generations before older ones without needing a provider
+ * release-date catalogue. Model ids conventionally contain their generation
+ * and revision (for example `gpt-5.4` or `claude-sonnet-4-6`), and some also
+ * end with a dated snapshot.
+ */
+function compareModelRecency(a: Model<Api>, b: Model<Api>): number {
+	const parts = (model: Model<Api>): number[] => {
+		// Snapshot dates are compared separately; they are not model revisions.
+		const withoutDates = model.id.replace(/20\d{2}[-_]?\d{2}[-_]?\d{2}/g, "");
+		return (withoutDates.match(/\d+/g) ?? []).map(Number);
+	};
+	const snapshotDate = (model: Model<Api>): number => {
+		const match = model.id.match(/(20\d{2})[-_]?(\d{2})[-_]?(\d{2})/);
+		return match ? Number(match.slice(1).join("")) : 0;
+	};
+
+	const aParts = parts(a);
+	const bParts = parts(b);
+	for (let i = 0; i < Math.max(aParts.length, bParts.length); i++) {
+		const diff = (bParts[i] ?? -1) - (aParts[i] ?? -1);
+		if (diff !== 0) return diff;
+	}
+
+	const dateDiff = snapshotDate(b) - snapshotDate(a);
+	if (dateDiff !== 0) return dateDiff;
+	return a.name.localeCompare(b.name);
+}
+
 // ─── component ──────────────────────────────────────────────────────────────
 
 interface ModelPickerOptions {
@@ -268,14 +297,9 @@ class ModelPickerComponent {
 
 		const cur = this.opts.currentModel;
 
-		// Sort models within each category: active first, then alphabetical
+		// Sort models within each category by generation/revision, newest first.
 		for (const [, arr] of map) {
-			arr.sort((a, b) => {
-				const aCur = cur && a.id === cur.id && a.provider === cur.provider ? -1 : 0;
-				const bCur = cur && b.id === cur.id && b.provider === cur.provider ? -1 : 0;
-				if (aCur !== bCur) return aCur - bCur;
-				return a.name.localeCompare(b.name);
-			});
+			arr.sort(compareModelRecency);
 		}
 
 		// Sort categories: active provider first, then alphabetical
@@ -304,8 +328,10 @@ class ModelPickerComponent {
 				const score = matchModel(model, query);
 				if (score !== null) scored.push({ model, score, index });
 			});
-			// Best match first; original ordering breaks ties so the list is stable
-			scored.sort((a, b) => b.score - a.score || a.index - b.index);
+			// Best match first; among equally relevant results, show newer models first.
+			scored.sort((a, b) =>
+				b.score - a.score || compareModelRecency(a.model, b.model) || a.index - b.index,
+			);
 			this.filteredRows = scored.map((s) => s.model);
 		}
 		// Clamp row selection
